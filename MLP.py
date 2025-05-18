@@ -193,7 +193,6 @@ def evaluate_model(model, X, y, label="Test", show_cm=True):
         y_true.append(y[i])
         y_pred.append(pred)
         count += 1
-    print(outputs)
 
     print(f"\n✅ Ran predictions for {count} images for {label} set")
 
@@ -225,7 +224,7 @@ def evaluate_model(model, X, y, label="Test", show_cm=True):
 # -----------------------
 # Main Execution
 # -----------------------
-BASE_DIR = ".\\"  # Folder containing .json files and image folders
+BASE_DIR = "."  # Folder containing .json files and image folders
 
 train_data = load_data(os.path.join(BASE_DIR, "train.json"))
 val_data = load_data(os.path.join(BASE_DIR, "val.json"))
