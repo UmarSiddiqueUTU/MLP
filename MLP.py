@@ -20,8 +20,10 @@ import tqdm
 class ImprovedNeuralNet:
     def __init__(
         self, input_nodes, output_nodes, hidden_nodes_list=[], learning_rate=0.01,
-        l2_reg=0.0001
-    ):
+        l2_reg=0.0001, class_weights=None
+    ): 
+        self.class_weights = class_weights if class_weights is not None else np.ones(output_nodes)
+
         # Create a list of layer sizes: input, all hidden layers, then output
         self.layers = [input_nodes] + hidden_nodes_list + [output_nodes]
         self.learning_rate = learning_rate
@@ -131,8 +133,11 @@ class ImprovedNeuralNet:
         prev_loss = self.CE_loss(y, output)
 
         # --- backward and updating weights & biases ---
-        # Calculate output layer error (derivative of cross-entropy with softmax is output - target)
-        delta = output - y  # Shape: (output_nodes, batch_size)
+        # Apply class weights (weighted cross-entropy derivative)
+# shape: (output_nodes, batch_size)
+        weights = self.class_weights.reshape(-1, 1)  # broadcast across batch
+        delta = (output - y) * weights
+
         m = train_X.shape[1]
 
         # Backpropagate the error through all layers
@@ -231,18 +236,13 @@ val_data = load_data(os.path.join(BASE_DIR, "val.json"))
 test_data = load_data(os.path.join(BASE_DIR, "test.json"))
 
 INPUT_NODES = 4096
-HIDDEN_SIZES = [4096, 1024, 1024, 256, 32]
+HIDDEN_SIZES = [4096, 1024, 256, 32]
 N_CLASSES = 6
-INITIAL_LR = 0.001
-EPOCHS = 100
-BATCH_SIZE = 64
+INITIAL_LR = 0.005
+EPOCHS = 20
+BATCH_SIZE = 32
 
-nn = ImprovedNeuralNet(
-    input_nodes=INPUT_NODES,
-    output_nodes=N_CLASSES,
-    hidden_nodes_list=HIDDEN_SIZES,
-    learning_rate=INITIAL_LR,
-)
+
 
 
 def prepare_data(data_dict, base_path, count=None):
@@ -297,6 +297,7 @@ print(f"✅ Loaded {X_val.shape[1]} validation samples")
 print(f"✅ Loaded {X_test.shape[1]} test samples")
 
 
+
 # Get statistics of the dataset
 print("\n📊 Dataset Statistics"
       "\n--------------------------------")
@@ -317,6 +318,27 @@ for i, count in zip(unique, counts):
     print(f"Class {i}: {count} samples")
 # -------------------------
 
+# Compute class weights from full training labels
+from collections import Counter
+
+def compute_class_weights(y_labels, n_classes=6):
+    counts = Counter(y_labels)
+    total = sum(counts.values())
+    weights = np.zeros(n_classes)
+    for i in range(n_classes):
+        freq = counts.get(i, 1)
+        weights[i] = total / (n_classes * freq)
+    return weights
+
+class_weights = compute_class_weights(y, n_classes=N_CLASSES)
+
+nn = ImprovedNeuralNet(
+    input_nodes=INPUT_NODES,
+    output_nodes=N_CLASSES,
+    hidden_nodes_list=HIDDEN_SIZES,
+    learning_rate=INITIAL_LR,
+    class_weights=class_weights
+)
 print("\n🧠 Starting training...")
 for epoch in range(EPOCHS):
     current_lr = INITIAL_LR
