@@ -251,6 +251,8 @@ def evaluate_model(model, X, y, label="Test", show_cm=True):
 
     y_true = y
 
+    count = y.shape[0]
+
     print(f"\n✅ Ran predictions for {count} images for {label} set")
 
     acc = accuracy_score(y_true, y_pred)
@@ -287,9 +289,9 @@ test_data = load_data(os.path.join(BASE_DIR, "test.json"))
 INPUT_NODES = 4096
 HIDDEN_SIZES = [1024, 256, 32]
 N_CLASSES = 6
-INITIAL_LR = 0.005
+INITIAL_LR = 0.001
 EPOCHS = 20
-BATCH_SIZE = 500
+BATCH_SIZE = 64
 
 
 # -----------------------
@@ -363,8 +365,8 @@ print("\n🧠 Starting training...")
 for epoch in range(EPOCHS):
     current_lr = INITIAL_LR
     # # Apply learning rate decay
-    current_lr = INITIAL_LR / (1 + 0.1 * epoch)  # Simple decay schedule
-    nn.learning_rate = current_lr
+    # current_lr = INITIAL_LR / (1 + 0.1 * epoch)  # Simple decay schedule
+    # nn.learning_rate = current_lr
 
     print(f"\nEpoch {epoch + 1}/{EPOCHS} (LR: {current_lr:.6f})")
     # shuffle the data

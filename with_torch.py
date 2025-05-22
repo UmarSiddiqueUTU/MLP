@@ -30,8 +30,7 @@ class NeuralNetowrk(NN.Module):
             NN.ReLU(),
             NN.Linear(256, 32),
             NN.ReLU(),
-            NN.Linear(32, 6),
-            NN.ReLU(),
+            NN.Linear(32, 6)
         )
 
     def forward(self, x):
@@ -118,7 +117,7 @@ test_data = load_data(os.path.join(BASE_DIR, "test.json"))
 INPUT_NODES = 4096
 HIDDEN_SIZES = [4096, 1024, 256, 32]
 N_CLASSES = 6
-INITIAL_LR = 0.005
+INITIAL_LR = 0.01
 EPOCHS = 50
 BATCH_SIZE = 32
 
