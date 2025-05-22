@@ -167,10 +167,12 @@ class ImprovedNeuralNet:
             inputs_list = np.reshape(inputs_list, (-1, 1))
 
         X = inputs_list
-
+        # Forward pass through the network
         for i in range(len(self.weights) - 1):
             X = self.relu(self.weights[i].T @ X + self.biases[i])
         output = self.softmax(self.weights[-1].T @ X + self.biases[-1])
+        # add argmax to get the predicted class
+        output = np.argmax(output, axis=0)
         return output
 
 # -----------------------
@@ -188,22 +190,32 @@ def preprocess_image(img_path, size=(64, 64)):
     return img.flatten()
 
 
+def prepare_data(data_dict, base_path, count=None):
+    """
+    Outputs a numpy array of shape (n_features, n_samples) and a labels array of shape (n_samples,)
+    where n_features is the number of pixels in the image
+
+    """
+    data = []
+    labels = []
+    if count is not None:
+        data_dict = dict(list(data_dict.items())[:count])
+    for rel_path, label in data_dict.items():
+        full_path = os.path.normpath(os.path.join(base_path, rel_path))
+        if not os.path.exists(full_path):
+            print(f"❌ Missing: {full_path}")
+            continue
+        inputs = preprocess_image(full_path)
+        data.append(inputs)
+        labels.append(label)
+    return (np.array(data).T), np.array(labels).T
+
+
 def evaluate_model(model, X, y, label="Test", show_cm=True):
-    y_true, y_pred = [], []
-    count = 0
-    for i in range(X.shape[1]):
-        inputs = X[:, i]
-        outputs = model.query(inputs)
-        pred = np.argmax(outputs)
-        y_true.append(y[i])
-        y_pred.append(pred)
-        count += 1
+    y_pred = model.query(X)
+    y_true = y
 
     print(f"\n✅ Ran predictions for {count} images for {label} set")
-
-    if not y_true:
-        print("⚠ No predictions made.")
-        return
 
     acc = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred, average="macro", zero_division=0)
@@ -236,34 +248,11 @@ val_data = load_data(os.path.join(BASE_DIR, "val.json"))
 test_data = load_data(os.path.join(BASE_DIR, "test.json"))
 
 INPUT_NODES = 4096
-HIDDEN_SIZES = [4096, 1024, 256, 32]
+HIDDEN_SIZES = [1024, 256, 32]
 N_CLASSES = 6
 INITIAL_LR = 0.005
 EPOCHS = 20
 BATCH_SIZE = 32
-
-
-
-
-def prepare_data(data_dict, base_path, count=None):
-    """
-    Outputs a numpy array of shape (n_features, n_samples) and a labels array of shape (n_samples,)
-    where n_features is the number of pixels in the image
-
-    """
-    data = []
-    labels = []
-    if count is not None:
-        data_dict = dict(list(data_dict.items())[:count])
-    for rel_path, label in data_dict.items():
-        full_path = os.path.normpath(os.path.join(base_path, rel_path))
-        if not os.path.exists(full_path):
-            print(f"❌ Missing: {full_path}")
-            continue
-        inputs = preprocess_image(full_path)
-        data.append(inputs)
-        labels.append(label)
-    return (np.array(data).T), np.array(labels).T
 
 
 # -----------------------
@@ -318,19 +307,14 @@ for i, count in zip(unique, counts):
     print(f"Class {i}: {count} samples")
 # -------------------------
 
-# Compute class weights from full training labels
-from collections import Counter
 
 def compute_class_weights(y_labels, n_classes=6):
-    counts = Counter(y_labels)
-    total = sum(counts.values())
-    weights = np.zeros(n_classes)
-    for i in range(n_classes):
-        freq = counts.get(i, 1)
-        weights[i] = total / (n_classes * freq)
-    return weights
+    class_counts = np.bincount(y_labels, minlength=n_classes)
+    total = class_counts.sum()
+    return total / (n_classes * class_counts)
 
 class_weights = compute_class_weights(y, n_classes=N_CLASSES)
+print(f"\nClass Weights: {class_weights}")
 
 nn = ImprovedNeuralNet(
     input_nodes=INPUT_NODES,
@@ -343,9 +327,9 @@ print("\n🧠 Starting training...")
 for epoch in range(EPOCHS):
     current_lr = INITIAL_LR
     # # Apply learning rate decay
-    # current_lr = INITIAL_LR / (1 + 0.1 * epoch)  # Simple decay schedule
-    # nn.learning_rate = current_lr
-    
+    current_lr = INITIAL_LR / (1 + 0.1 * epoch)  # Simple decay schedule
+    nn.learning_rate = current_lr
+
     print(f"\nEpoch {epoch + 1}/{EPOCHS} (LR: {current_lr:.6f})")
     # shuffle the data
     indices = np.arange(X.shape[1])
@@ -356,18 +340,20 @@ for epoch in range(EPOCHS):
     # Split the data into batches
     num_batches = int(np.ceil(X.shape[1] / BATCH_SIZE))
     tqdm_iter = tqdm.tqdm(range(num_batches))
+    # Convert labels to one-hot encoding
+    one_hot_y = np.zeros((N_CLASSES, y.shape[0]))
+    one_hot_y[y, np.arange(y.shape[0])] = 1
     for i in tqdm_iter:
         tqdm_iter.set_description(f"Epoch {epoch + 1}/{EPOCHS} - Batch {i + 1}/{num_batches}")
         start = i * BATCH_SIZE
         end = min((i + 1) * BATCH_SIZE, X.shape[1])
         batch_X = X[:, start:end]
-        batch_y = y[start:end]
-        # Convert labels to one-hot encoding
-        one_hot_y = np.zeros((N_CLASSES, batch_y.shape[0]))
-        one_hot_y[batch_y, np.arange(batch_y.shape[0])] = 1
+        batch_y = one_hot_y[:, start:end]
         # Train the model on the batch
-        prev_loss = nn.train(batch_X, one_hot_y)
-        tqdm_iter.set_postfix(loss=prev_loss)
+        prev_loss = nn.train(batch_X, batch_y)
+        tqdm_iter.set_postfix_str(
+            f"Loss: {prev_loss:.4f}"
+        )
 
     evaluate_model(nn, X_val, y_val, label="Validation", show_cm=False)
 
