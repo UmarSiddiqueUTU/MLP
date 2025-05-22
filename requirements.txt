@@ -1,1 +1,6 @@
 tqdm
+scikit-image
+scikit-learn
+numpy
+matplotlib
+imageio
