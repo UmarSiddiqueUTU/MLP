@@ -19,10 +19,17 @@ import tqdm
 # -----------------------
 class ImprovedNeuralNet:
     def __init__(
-        self, input_nodes, output_nodes, hidden_nodes_list=[], learning_rate=0.01,
-        l2_reg=0.0001, class_weights=None
-    ): 
-        self.class_weights = class_weights if class_weights is not None else np.ones(output_nodes)
+        self,
+        input_nodes,
+        output_nodes,
+        hidden_nodes_list=[],
+        learning_rate=0.01,
+        l2_reg=0.0001,
+        class_weights=None,
+    ):
+        self.class_weights: np.ndarray = (
+            class_weights if class_weights is not None else np.ones(output_nodes)
+        )
 
         # Create a list of layer sizes: input, all hidden layers, then output
         self.layers = [input_nodes] + hidden_nodes_list + [output_nodes]
@@ -62,11 +69,11 @@ class ImprovedNeuralNet:
     def softmax(self, x):
         # Add numerical stability safeguards
         x = np.clip(x, -500, 500)  # Prevent extreme values
-        x = np.nan_to_num(x)       # Replace any NaN values
-        
+        x = np.nan_to_num(x)  # Replace any NaN values
+
         # Subtract max for numerical stability (you already have this)
         e_x = np.exp(x - np.max(x, axis=0, keepdims=True))
-        
+
         # Add small epsilon to denominator to prevent division by zero
         return e_x / (e_x.sum(axis=0, keepdims=True) + 1e-10)
 
@@ -74,18 +81,23 @@ class ImprovedNeuralNet:
         # Cross-entropy loss function with class weighting
         # Clip predictions to avoid log(0)
         y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
-        
+
         # Calculate class weights based on inverse frequency
+        if y_true.ndim == 1:
+            y_true = np.eye(self.layers[-1])[y_true].T  # Convert to one-hot encoding
+        # Ensure y_true is one-hot encoded
+        if y_true.shape[0] != self.layers[-1]:
+            raise ValueError(
+                f"y_true should have shape ({self.layers[-1]}, n_samples), got {y_true.shape}"
+            )
         class_indices = np.argmax(y_true, axis=0)
-        unique, counts = np.unique(class_indices, return_counts=True)
-        weights = np.ones(y_true.shape[0])
-        max_count = np.max(counts)
-        for i, count in zip(unique, counts):
-            weights[i] = max_count / (count + 1e-5)  # Adding small epsilon to avoid division by zero
-        
+
         # Apply weights to individual samples
-        sample_weights = weights[class_indices]
-        weighted_loss = -np.sum(sample_weights * np.sum(y_true * np.log(y_pred), axis=0)) / np.sum(sample_weights)
+        sample_weights = self.class_weights[class_indices]
+
+        weighted_loss = -np.sum(
+            sample_weights * np.sum(y_true * np.log(y_pred), axis=0)
+        ) / np.sum(sample_weights)
         return weighted_loss
 
     # Train the neural network using backpropagation.
@@ -97,15 +109,23 @@ class ImprovedNeuralNet:
         # --- forward ---
         # Handle single sample case
         if len(train_X.shape) == 1:
-            train_X = np.reshape(train_X, (-1, 1))  # convert to column vector (features x 1)
-            
+            train_X = np.reshape(
+                train_X, (-1, 1)
+            )  # convert to column vector (features x 1)
+
         if len(train_Y.shape) == 1:
-            train_Y = np.reshape(train_Y, (-1, 1))  # convert to column vector (outputs x 1)
+            train_Y = np.reshape(
+                train_Y, (-1, 1)
+            )  # convert to column vector (outputs x 1)
 
         # Correct dimension check for features x samples format
-        assert train_X.shape[0] == self.layers[0], f"Expected {self.layers[0]} features, got {train_X.shape[0]}"
-        assert train_Y.shape[0] == self.layers[-1], f"Expected {self.layers[-1]} output classes, got {train_Y.shape[0]}"
-        
+        assert (
+            train_X.shape[0] == self.layers[0]
+        ), f"Expected {self.layers[0]} features, got {train_X.shape[0]}"
+        assert (
+            train_Y.shape[0] == self.layers[-1]
+        ), f"Expected {self.layers[-1]} output classes, got {train_Y.shape[0]}"
+
         X = train_X  # Shape: (input_nodes, batch_size)
         y = train_Y  # Shape: (output_nodes, batch_size)
 
@@ -120,7 +140,7 @@ class ImprovedNeuralNet:
             # Apply the relu activation function
             X = self.relu(z)
             # Store the activations
-            activations.append(X) # Shape: (n_out_l, batch_size)
+            activations.append(X)  # Shape: (n_out_l, batch_size)
             zs.append(z)
 
         # Compute the output layer
@@ -134,46 +154,56 @@ class ImprovedNeuralNet:
 
         # --- backward and updating weights & biases ---
         # Apply class weights (weighted cross-entropy derivative)
-# shape: (output_nodes, batch_size)
-        weights = self.class_weights.reshape(-1, 1)  # broadcast across batch
-        delta = (output - y) * weights
+        # shape: (output_nodes, batch_size)
+
+        # scale delta by class weights
+        delta = (output - y) * self.class_weights.reshape(-1, 1)
 
         m = train_X.shape[1]
 
         # Backpropagate the error through all layers
         for l in reversed(range(len(self.weights))):
             # Calculate gradients for weights and biases
-            dW = activations[l] @ delta.T / m  # Shape:  (n_in_l, batch_size) @ (batch_size, n_out_l) -> (n_in_l, n_out_l)
+            dW = (
+                activations[l] @ delta.T / m
+            )  # Shape:  (n_in_l, batch_size) @ (batch_size, n_out_l) -> (n_in_l, n_out_l)
             # Add L2 regularization term
             dW += self.l2_reg * self.weights[l]
             db = np.sum(delta, axis=1, keepdims=True) / m  # Shape: (n_out_l, 1)
 
             # Update weights and biases
             self.weights[l] -= self.learning_rate * dW
-    
+
             self.biases[l] -= self.learning_rate * db
 
             # Calculate delta for previous layer (if not at input layer)
             if l > 0:
                 # Propagate error backward through weights and apply activation derivative
-                delta = (self.weights[l] @ delta) * self.relu_derivative(zs[l-1])
+                delta = (self.weights[l] @ delta) * self.relu_derivative(zs[l - 1])
 
         return prev_loss
 
     def query(self, inputs_list: np.ndarray):
-        if(len(inputs_list.shape) == 1):
+        if len(inputs_list.shape) == 1:
             assert inputs_list.shape[0] == self.layers[0]
             # Convert the input list into a column vector
             inputs_list = np.reshape(inputs_list, (-1, 1))
 
         X = inputs_list
+
         # Forward pass through the network
-        for i in range(len(self.weights) - 1):
-            X = self.relu(self.weights[i].T @ X + self.biases[i])
-        output = self.softmax(self.weights[-1].T @ X + self.biases[-1])
-        # add argmax to get the predicted class
-        output = np.argmax(output, axis=0)
+        for w, b in zip(self.weights[:-1], self.biases[:-1]):
+            # Compute the weighted sum of inputs for the next layer
+            z = w.T @ X + b  # (n_out x n_in) @ (n_in x batch_size) + (n_out x 1)
+            # Apply the relu activation function
+            X = self.relu(z)
+
+        # Compute the output layer
+        z = self.weights[-1].T @ X + self.biases[-1]
+        output = self.softmax(z)
+
         return output
+
 
 # -----------------------
 # Utility Functions
@@ -213,6 +243,12 @@ def prepare_data(data_dict, base_path, count=None):
 
 def evaluate_model(model, X, y, label="Test", show_cm=True):
     y_pred = model.query(X)
+
+    loss = model.CE_loss(y, y_pred)
+
+    # add argmax to get the predicted class
+    y_pred = np.argmax(y_pred, axis=0)
+
     y_true = y
 
     print(f"\n✅ Ran predictions for {count} images for {label} set")
@@ -223,6 +259,7 @@ def evaluate_model(model, X, y, label="Test", show_cm=True):
     f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
     print(f"\n📊 {label} Results")
+    print(f"Loss     : {loss:.4f}")
     print(f"Accuracy : {acc:.4f}")
     print(f"Precision: {precision:.4f}")
     print(f"Recall   : {recall:.4f}")
@@ -252,7 +289,7 @@ HIDDEN_SIZES = [1024, 256, 32]
 N_CLASSES = 6
 INITIAL_LR = 0.005
 EPOCHS = 20
-BATCH_SIZE = 32
+BATCH_SIZE = 500
 
 
 # -----------------------
@@ -286,10 +323,8 @@ print(f"✅ Loaded {X_val.shape[1]} validation samples")
 print(f"✅ Loaded {X_test.shape[1]} test samples")
 
 
-
 # Get statistics of the dataset
-print("\n📊 Dataset Statistics"
-      "\n--------------------------------")
+print("\n📊 Dataset Statistics" "\n--------------------------------")
 # distribution of classes in the training set
 print("Training set class distribution:")
 unique, counts = np.unique(y, return_counts=True)
@@ -313,6 +348,7 @@ def compute_class_weights(y_labels, n_classes=6):
     total = class_counts.sum()
     return total / (n_classes * class_counts)
 
+
 class_weights = compute_class_weights(y, n_classes=N_CLASSES)
 print(f"\nClass Weights: {class_weights}")
 
@@ -321,7 +357,7 @@ nn = ImprovedNeuralNet(
     output_nodes=N_CLASSES,
     hidden_nodes_list=HIDDEN_SIZES,
     learning_rate=INITIAL_LR,
-    class_weights=class_weights
+    class_weights=class_weights,
 )
 print("\n🧠 Starting training...")
 for epoch in range(EPOCHS):
@@ -344,16 +380,16 @@ for epoch in range(EPOCHS):
     one_hot_y = np.zeros((N_CLASSES, y.shape[0]))
     one_hot_y[y, np.arange(y.shape[0])] = 1
     for i in tqdm_iter:
-        tqdm_iter.set_description(f"Epoch {epoch + 1}/{EPOCHS} - Batch {i + 1}/{num_batches}")
+        tqdm_iter.set_description(
+            f"Epoch {epoch + 1}/{EPOCHS} - Batch {i + 1}/{num_batches}"
+        )
         start = i * BATCH_SIZE
         end = min((i + 1) * BATCH_SIZE, X.shape[1])
         batch_X = X[:, start:end]
         batch_y = one_hot_y[:, start:end]
         # Train the model on the batch
         prev_loss = nn.train(batch_X, batch_y)
-        tqdm_iter.set_postfix_str(
-            f"Loss: {prev_loss:.4f}"
-        )
+        tqdm_iter.set_postfix_str(f"Loss: {prev_loss:.4f}")
 
     evaluate_model(nn, X_val, y_val, label="Validation", show_cm=False)
 
